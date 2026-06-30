@@ -1,10 +1,13 @@
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, get_current_user
+from app.infrastructure.admin_sync_client import sync_to_admin
 from app.tenants.exceptions import TenantAlreadyExists, TenantInvalidStatus, TenantNotFound
+from app.tenants.models.tenant import Tenant
 from app.tenants.schemas.tenant import (
     TenantCreate,
     TenantListResponse,
@@ -15,6 +18,12 @@ from app.tenants.schemas.tenant import (
 from app.tenants.services.tenant_service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
+
+
+def _admin_id(tenant: Tenant) -> str | None:
+    """Extract stored admin_tenant_id from tenant metadata, if present."""
+    meta = tenant.metadata_ or {}
+    return meta.get("admin_tenant_id")
 
 
 @router.get("/", response_model=TenantListResponse)
@@ -30,13 +39,24 @@ def list_tenants(
 
 
 @router.post("/", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
-def create_tenant(
+async def create_tenant(
     data: TenantCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """Create a new tenant."""
-    return TenantService(db).create(data)
+    tenant = TenantService(db).create(data)
+    asyncio.create_task(sync_to_admin(
+        portal_tenant_id=str(tenant.id),
+        admin_tenant_id=_admin_id(tenant),
+        name=tenant.name,
+        slug=tenant.slug,
+        contact_email=tenant.contact_email,
+        contact_phone=tenant.contact_phone,
+        status=tenant.status,
+        subscription_plan=(tenant.metadata_ or {}).get("subscription_plan"),
+    ))
+    return tenant
 
 
 @router.get("/slug/{slug}", response_model=TenantResponse)
@@ -60,14 +80,25 @@ def get_tenant(
 
 
 @router.put("/{tenant_id}", response_model=TenantResponse)
-def update_tenant(
+async def update_tenant(
     tenant_id: UUID,
     data: TenantUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """Update tenant details."""
-    return TenantService(db).update(tenant_id, data)
+    tenant = TenantService(db).update(tenant_id, data)
+    asyncio.create_task(sync_to_admin(
+        portal_tenant_id=str(tenant.id),
+        admin_tenant_id=_admin_id(tenant),
+        name=tenant.name,
+        slug=tenant.slug,
+        contact_email=tenant.contact_email,
+        contact_phone=tenant.contact_phone,
+        status=tenant.status,
+        subscription_plan=(tenant.metadata_ or {}).get("subscription_plan"),
+    ))
+    return tenant
 
 
 @router.delete("/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -81,11 +112,22 @@ def delete_tenant(
 
 
 @router.put("/{tenant_id}/status", response_model=TenantResponse)
-def change_tenant_status(
+async def change_tenant_status(
     tenant_id: UUID,
     data: TenantStatusUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """Change the status of a tenant (active/suspended/trial/cancelled)."""
-    return TenantService(db).change_status(tenant_id, data)
+    tenant = TenantService(db).change_status(tenant_id, data)
+    asyncio.create_task(sync_to_admin(
+        portal_tenant_id=str(tenant.id),
+        admin_tenant_id=_admin_id(tenant),
+        name=tenant.name,
+        slug=tenant.slug,
+        contact_email=tenant.contact_email,
+        contact_phone=tenant.contact_phone,
+        status=tenant.status,
+        subscription_plan=(tenant.metadata_ or {}).get("subscription_plan"),
+    ))
+    return tenant

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     INTERNAL_API_KEY: str = "dev-internal-key"
     CORS_ORIGINS: str = "*"
 
+    # Admin-service (platform-domain-be) — inbound sync target
+    ADMIN_SERVICE_URL: str = "http://admin-service:8000"
+
     model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 
 
